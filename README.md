@@ -1,4 +1,4 @@
-# 🚀 Flexible ML Predictor
+# Flexible ML Predictor
 
 ## Short Description
 
@@ -6,7 +6,7 @@ A robust, **memory-efficient** command-line tool designed to handle, clean, and 
 
 ---
 
-## 🛠️ Key Features
+## Key Features
 
 * **Data Leakage Prevention:** Utilizes `ColumnTransformer` to ensure preprocessing steps (scaling, imputation) are learned *only* from the training data.
 * **Performance & Memory Optimized:** Uses **RandomizedSearchCV** for fast tuning and **sparse encoding/downcasting** for memory efficiency on large datasets.
@@ -18,7 +18,7 @@ A robust, **memory-efficient** command-line tool designed to handle, clean, and 
 
 ---
 
-## ⚙️ Installation
+## Installation
 
 1.  **Clone the Repository:**
     ```bash
@@ -28,7 +28,9 @@ A robust, **memory-efficient** command-line tool designed to handle, clean, and 
 2.  **Create a Virtual Environment (Recommended):**
     ```bash
     python -m venv venv
-    source venv/bin/activate  # Windows: venv\Scripts\activate
+    ```
+    ```bash
+    source venv/bin/activate
     ```
 
 3.  **Install Dependencies:**
@@ -38,7 +40,7 @@ A robust, **memory-efficient** command-line tool designed to handle, clean, and 
 
 ---
 
-## ▶️ Usage
+## Usage
 
 Run the main application from your terminal to access the interactive menu:
 
