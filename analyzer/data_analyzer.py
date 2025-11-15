@@ -14,6 +14,8 @@ from pandas.api.types import is_numeric_dtype, is_datetime64_any_dtype
 from analyzer.preprocessing import create_preprocessor, DatetimeFeatureExtractor
 from sklearn.ensemble import RandomForestRegressor, GradientBoostingRegressor, RandomForestClassifier, GradientBoostingClassifier
 from sklearn.linear_model import LinearRegression, LogisticRegression
+from sklearn.cluster import KMeans
+from sklearn.decomposition import PCA
 
 warnings.filterwarnings('ignore')
 
@@ -408,3 +410,81 @@ class Data_Analyzer:
             'total_columns': len(self.df.columns),
             'all_columns': self.df.columns.tolist()
         }
+    
+    def run_unsupervised_analysis(self, analysis_type: str, k_or_n: int):
+        """
+        Runs K-Means Clustering or PCA on the currently loaded data.
+        """
+        if self.df is None:
+            raise ValueError("Data not loaded. Please load a file first (Option 1).")
+
+        if not isinstance(k_or_n, int) or k_or_n < 1:
+            raise ValueError("K or N must be a positive integer greater than 0.")
+        
+        self.logger.info(f"Starting unsupervised analysis: {analysis_type} with parameter {k_or_n}")
+
+        # Separate features from the existing DataFrame
+        column_types = self.get_column_types()
+        
+        # Use all available features for unsupervised learning
+        numeric_features = column_types['numeric']
+        categorical_features = column_types['categorical']
+        datetime_features = column_types['datetime']
+        
+        all_features = numeric_features + categorical_features + datetime_features
+        if not all_features:
+            raise ValueError("No valid features found after cleaning. Cannot run unsupervised analysis.")
+        
+        X = self.df[all_features]
+        
+        # Create the full preprocessor (scaling and OHE)
+        # Note: We use the existing preprocessor pipeline to ensure data is scaled and encoded.
+        preprocessor = create_preprocessor(numeric_features, categorical_features, datetime_features)
+        
+        try:
+            # 1. Fit and transform the entire dataset (no train/test split needed for UL)
+            X_processed = preprocessor.fit_transform(X)
+            
+            if analysis_type == 'clustering':
+                if k_or_n > len(X):
+                     raise ValueError(f"K ({k_or_n}) cannot be greater than the number of samples ({len(X)}).")
+                
+                # Use standard KMeans
+                model = KMeans(n_clusters=k_or_n, random_state=42, n_init=10, max_iter=300)
+                labels = model.fit_predict(X_processed)
+                
+                # Add the labels back to the DataFrame
+                new_col_name = f'cluster_k{k_or_n}'
+                self.df[new_col_name] = labels
+                
+                self.logger.info(f"K-Means Clustering complete. Added column: '{new_col_name}'")
+                print(f"\n--- Clustering Analysis Complete ---")
+                print(f"Added column: '{new_col_name}' to the DataFrame.")
+                print(f"Cluster sizes:\n{self.df[new_col_name].value_counts().to_markdown()}")
+            
+            elif analysis_type == 'pca':
+                if k_or_n > X_processed.shape[1]:
+                    raise ValueError(f"N ({k_or_n}) cannot be greater than the number of features after preprocessing ({X_processed.shape[1]}).")
+                    
+                # Run PCA
+                model = PCA(n_components=k_or_n, random_state=42)
+                components = model.fit_transform(X_processed)
+                
+                # Add components back to the DataFrame
+                component_names = [f'pca_c{i+1}' for i in range(k_or_n)]
+                for i, name in enumerate(component_names):
+                    self.df[name] = components[:, i]
+                
+                explained_variance = model.explained_variance_ratio_.sum()
+                
+                self.logger.info(f"PCA complete. Added {k_or_n} components.")
+                print(f"\n--- PCA Analysis Complete ---")
+                print(f"Added columns: {', '.join(component_names)}")
+                print(f"Total variance explained by {k_or_n} components: {explained_variance:.4f}")
+
+            else:
+                raise ValueError(f"Unsupported analysis type: {analysis_type}")
+
+        except Exception as e:
+            self.logger.error(f"Unsupervised analysis failed: {str(e)}")
+            raise
