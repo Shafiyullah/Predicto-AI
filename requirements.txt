@@ -3,3 +3,7 @@ numpy
 matplotlib
 scikit-learn
 joblib
+openpyxl
+gymnasium
+stable-baselines3
+shimmy
