@@ -1,5 +1,4 @@
 import sys
-import pandas as pd
 from analyzer.data_analyzer import Data_Analyzer
 
 def main():
@@ -11,16 +10,17 @@ def main():
             print("\n--- Menu ---")
             print("1. Load, clean, and optimize file (CSV, XLSX, JSON)")
             print("2. View data info")
-            print("3. Train a new model (Fast & Robust)")
-            print("4. Run Unsupervised Analysis (Clustering/PCA)")
-            print("5. Save the current model")
-            print("6. Load a saved model")
-            print("7. Predict on new data (file)")
-            print("8. Run Data Query (Pandas)")
-            print("9. Visualize Data (Plotting)")
+            print("3. Train a new model")
+            print("4. Run Unsupervised Analysis")
+            print("5. Train RL Agent")
+            print("6. Save the current model")
+            print("7. Load a saved model")
+            print("8. Predict on new data (file)")
+            print("9. Run Data Query (Pandas)")
+            print("10. Visualize Data (Plotting)")
             print("0. Exit")
             
-            choice = input("Choose option (0-9): ").strip()
+            choice = input("Choose option (0-10): ").strip()
             
             if choice == '1':
                 file_path = input("Enter file path: ").strip()
@@ -83,7 +83,24 @@ def main():
                 else:
                     print("Invalid analysis choice.")
             
+            # --- Reinforcement Learning Analysis ---
             elif choice == '5':
+                if analyzer.df is None:
+                    print("Load data first (Option 1).")
+                    continue
+            
+                options = analyzer.get_analysis_options()
+                print(f"\nAvailable numeric targets: {options['numeric_columns']}")
+                target = input("Enter numeric target column for Trend Prediction: ").strip()
+            
+                try:
+                    steps = input("Enter training timesteps (default 10000): ").strip()
+                    steps = int(steps) if steps else 10000
+                    analyzer.train_rl_agent(target, total_timesteps=steps)
+                except Exception as e:
+                    print(f"RL Error: {e}")
+            
+            elif choice == '6':
                 if analyzer.model_pipeline is None:
                     print("No model has been trained yet (Option 3).")
                     continue
@@ -92,11 +109,11 @@ def main():
                 analyzer.save_model(file_path)
                 print(f"Model saved to {file_path}")
 
-            elif choice == '6':
+            elif choice == '7':
                 file_path = input("Enter file path to load model from (e.g., my_model.joblib): ").strip()
                 analyzer.load_model(file_path)
 
-            elif choice == '7':
+            elif choice == '8':
                 if analyzer.model_pipeline is None:
                     print("No model is loaded (Option 5) or trained (Option 3).")
                     continue
@@ -119,7 +136,7 @@ def main():
                     results_df.to_csv("predictions.csv", index=False)
                     print("Saved to predictions.csv")
             
-            elif choice == '8':
+            elif choice == '9':
                 if analyzer.df is None:
                     print("Load data first (Option 1).")
                     continue
@@ -136,7 +153,7 @@ def main():
                 else:
                     print("Query returned an empty result set.")
 
-            elif choice == '9':
+            elif choice == '10':
                 if analyzer.df is None:
                     print("Load data first (Option 1).")
                     continue
