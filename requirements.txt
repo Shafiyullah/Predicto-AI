@@ -7,3 +7,4 @@ openpyxl
 gymnasium
 stable-baselines3
 shimmy
+tabulate
