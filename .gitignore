@@ -39,6 +39,7 @@ env/
 # Model files
 *.joblib
 *.pkl
+*.zip
 
 # IDE
 .idea/
