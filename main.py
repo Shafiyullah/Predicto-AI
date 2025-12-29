@@ -1,8 +1,8 @@
 import sys
-from analyzer.data_analyzer import Data_Analyzer
+from analyzer.data_analyzer import DataAnalyzer
 
 def main():
-    analyzer = Data_Analyzer()
+    analyzer = DataAnalyzer()
     print("=== Secure Data Analyzer ===")
     
     while True:
@@ -29,38 +29,38 @@ def main():
                 
             elif choice == '2':
                 if analyzer.df is None:
-                    print("Load data first (Option 1).")
+                    analyzer.logger.info("Load data first (Option 1).")
                     continue
 
                 options = analyzer.get_analysis_options()
-                print(f"\nTotal Rows: {options['total_rows']}")
-                print(f"Total Columns: {options['total_columns']}")
-                print(f"\nAll Columns:\n {options['all_columns']}")
-                print(f"\nValid Numeric Columns:\n {options['numeric_columns']}")
-                print(f"\nValid Categorical Columns (<=100 unique):\n {options['categorical_columns']}") 
-                print(f"\nDetected Datetime Columns:\n {options['datetime_columns']}") 
+                analyzer.logger.info(f"\nTotal Rows: {options['total_rows']}")
+                analyzer.logger.info(f"Total Columns: {options['total_columns']}")
+                analyzer.logger.info(f"\nAll Columns:\n {options['all_columns']}")
+                analyzer.logger.info(f"\nValid Numeric Columns:\n {options['numeric_columns']}")
+                analyzer.logger.info(f"\nValid Categorical Columns (<=100 unique):\n {options['categorical_columns']}") 
+                analyzer.logger.info(f"\nDetected Datetime Columns:\n {options['datetime_columns']}") 
                 
             elif choice == '3':
                 if analyzer.df is None:
-                    print("Load data first (Option 1).")
+                    analyzer.logger.info("Load data first (Option 1).")
                     continue
 
                 options = analyzer.get_analysis_options()
-                print("\n--- Train New Model ---")
-                print(f"All available columns: {options['all_columns']}")
+                analyzer.logger.info("\n--- Train New Model ---")
+                analyzer.logger.info(f"All available columns: {options['all_columns']}")
                 target = input("Enter the EXACT target column name to predict: ").strip()
-                print(f"Starting model training for target: {target}...")
+                analyzer.logger.info(f"Starting model training for target: {target}...")
                 analyzer.train_model(target)
             
             # --- Unsupervised Analysis ---
             elif choice == '4':
                 if analyzer.df is None:
-                    print("Load data first (Option 1).")
+                    analyzer.logger.info("Load data first (Option 1).")
                     continue
                 
-                print("\n--- Unsupervised Analysis ---")
-                print("1. Clustering (K-Means)")
-                print("2. Dimensionality Reduction (PCA)")
+                analyzer.logger.info("\n--- Unsupervised Analysis ---")
+                analyzer.logger.info("1. Clustering (K-Means)")
+                analyzer.logger.info("2. Dimensionality Reduction (PCA)")
                 
                 analysis_choice = input("Select analysis type (1 or 2): ").strip()
                 
@@ -71,6 +71,7 @@ def main():
                         analyzer.run_unsupervised_analysis(analysis_type, k)
                     except ValueError as e:
                         print(f"Input Error: {e}")
+                        analyzer.logger.warning(f"Unsupervised Analysis Input Error: {e}")
                     
                 elif analysis_choice == '2':
                     analysis_type = 'pca'
@@ -79,6 +80,7 @@ def main():
                         analyzer.run_unsupervised_analysis(analysis_type, n)
                     except ValueError as e:
                         print(f"Input Error: {e}")
+                        analyzer.logger.warning(f"PCA Input Error: {e}")
                 
                 else:
                     print("Invalid analysis choice.")
@@ -97,11 +99,13 @@ def main():
                     steps = input("Enter training timesteps (default 10000): ").strip()
                     steps = int(steps) if steps else 10000
                     save_path = input("Enter path to save RL agent (default: rl_trend_predictor): ").strip()
-                    if not save_path: save_path = "rl_trend_predictor"
+                    if not save_path:
+                        save_path = "rl_trend_predictor"
                     
                     analyzer.train_rl_agent(target, total_timesteps=steps, save_path=save_path)
                 except Exception as e:
                     print(f"RL Error: {e}")
+                    analyzer.logger.error(f"RL Training failed: {e}")
             
             elif choice == '6':
                 if analyzer.model_pipeline is None and analyzer.unsupervised_model is None:
@@ -127,7 +131,8 @@ def main():
                     new_df = analyzer.load_new_dataframe(file_path)
                     clean_new_df = analyzer._prepare_data_for_processing(new_df)
                 except Exception as e:
-                    print(f"Error loading or preparing new data file: {e}")
+                    print(f"Error loading new data: {e}")
+                    analyzer.logger.error(f"Prediction data load failed: {e}")
                     continue
 
                 results_df = analyzer.predict_new_data(clean_new_df)
@@ -151,20 +156,20 @@ def main():
                 
                 print("\n--- Query Results (Head) ---")
                 if not result_df.empty:
-                    print(result_df.head(10).to_markdown(index=False))
-                    print(f"\nTotal rows returned: {len(result_df)}")
+                    analyzer.logger.info(result_df.head(10).to_markdown(index=False))
+                    analyzer.logger.info(f"\nTotal rows returned: {len(result_df)}")
                 else:
-                    print("Query returned an empty result set.")
+                    analyzer.logger.info("Query returned an empty result set.")
 
             elif choice == '10':
                 if analyzer.df is None:
-                    print("Load data first (Option 1).")
+                    analyzer.logger.info("Load data first (Option 1).")
                     continue
                 options = analyzer.get_analysis_options()
-                print(f"\nAvailable numeric columns: {options['numeric_columns']}")
-                print("\nChoose plot type:")
-                print("  1. Histogram (single numeric column)")
-                print("  2. Scatter Plot (two numeric columns)")
+                analyzer.logger.info(f"\nAvailable numeric columns: {options['numeric_columns']}")
+                analyzer.logger.info("\nChoose plot type:")
+                analyzer.logger.info("  1. Histogram (single numeric column)")
+                analyzer.logger.info("  2. Scatter Plot (two numeric columns)")
                 plot_choice = input("Enter plot type (1 or 2): ").strip()
 
                 if plot_choice == '1':
@@ -188,9 +193,7 @@ def main():
             print("\nExiting application. Goodbye!")
             sys.exit()
         except Exception as e:
-            print(f"\nAn error occurred: {str(e)}")
-            if analyzer:
-                analyzer.logger.error(f"Top-level error: {str(e)}", exc_info=True)
+            analyzer.logger.error(f"Top-level error: {str(e)}", exc_info=True)
 
 if __name__ == "__main__":
     main()
