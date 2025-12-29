@@ -8,15 +8,15 @@ import re
 import joblib
 import gc
 from pathlib import Path
+from pandas.api.types import is_numeric_dtype, is_datetime64_any_dtype
 from sklearn.model_selection import train_test_split, RandomizedSearchCV
 from sklearn.pipeline import Pipeline
 from sklearn.metrics import mean_squared_error, r2_score, accuracy_score, classification_report
-from pandas.api.types import is_numeric_dtype, is_datetime64_any_dtype
-from analyzer.preprocessing import create_preprocessor
-from sklearn.ensemble import RandomForestRegressor, GradientBoostingRegressor, RandomForestClassifier, GradientBoostingClassifier
+from sklearn.ensemble import RandomForestRegressor, GradientBoostingRegressor, RandomForestClassifier, GradientBoostingClassifier, HistGradientBoostingRegressor, HistGradientBoostingClassifier
 from sklearn.linear_model import LinearRegression, LogisticRegression
 from sklearn.cluster import KMeans
 from sklearn.decomposition import PCA
+from analyzer.preprocessing import create_preprocessor
 
 warnings.filterwarnings('ignore')
 
@@ -42,8 +42,19 @@ except ImportError:
     PROPHET_AVAILABLE = False
 
 
-class Data_Analyzer:
+class DataAnalyzerError(Exception):
+    """Custom exception for DataAnalyzer errors."""
+    pass
+
+class DataAnalyzer:
+    """
+    Core engine for the Flexible ML Predictor.
+    
+    Handles data loading, cleaning, preprocessing, model training (Supervised/Unsupervised),
+    and Reinforcement Learning tasks. Uses a pipeline approach for robust ML workflows.
+    """
     def __init__(self):
+        """Initialize the DataAnalyzer with empty state."""
         self.df = None
         self.model_pipeline = None
         self.target_col = None
@@ -66,6 +77,11 @@ class Data_Analyzer:
         self.logger = logging.getLogger(__name__)
         
     def validate_file_path(self, file_path: str) -> bool:
+        """
+        Validates if the provided file path exists and is a supported format.
+        Args: file_path (str): Absolute or relative path to the file.
+        Returns: bool: True if valid.
+        """
         try:
             if not file_path or not isinstance(file_path, str):
                 raise ValueError("File path must be a non-empty string")
@@ -81,9 +97,14 @@ class Data_Analyzer:
             return True
         except Exception as e:
             self.logger.error(f"File validation failed: {str(e)}")
-            raise
+            raise DataAnalyzerError(f"Validation failed: {e}") from e
     
     def load_new_dataframe(self, file_path: str) -> pd.DataFrame:
+        """
+        Loads a dataframe from the specified file path using optimal engines.
+        Args: file_path (str): Path to the source file.
+        Returns: pd.DataFrame: The loaded raw dataframe.
+        """
         self.validate_file_path(file_path)
         file_ext = Path(file_path).suffix.lower()
         
@@ -106,51 +127,72 @@ class Data_Analyzer:
         df.columns = [col.strip().lower().replace(' ', '_').replace('-', '_') for col in df.columns]
         
         # 2. Aggressively convert to numeric where possible
+        # Pre-calculate len for efficiency
+        n_rows = len(df)
+        threshold = 0.8 * n_rows
+        
         for col in df.columns:
-            if not is_numeric_dtype(df[col]) and not is_datetime64_any_dtype(df[col]):
-                # Attempt numeric conversion
-                converted_numeric = pd.to_numeric(df[col], errors='coerce')
-                if converted_numeric.notnull().sum() > 0.8 * len(df):
-                     df[col] = converted_numeric
-                     self.logger.info(f"Converted column '{col}' to numeric.")
-                     continue
+            # Skip if already numeric or datetime
+            if is_numeric_dtype(df[col]) or is_datetime64_any_dtype(df[col]):
+                continue
                 
-                try:
-                    converted_datetime = pd.to_datetime(df[col], errors='coerce')
-                    # If >80% are valid dates, convert the column
-                    if converted_datetime.notnull().sum() > 0.8 * len(df):
-                        df[col] = converted_datetime
-                        self.logger.info(f"Converted column '{col}' to datetime.")
-                        continue
-                except Exception:
-                    pass
+            # Attempt numeric conversion
+            converted_numeric = pd.to_numeric(df[col], errors='coerce')
+            if converted_numeric.count() > threshold:
+                df[col] = converted_numeric
+                self.logger.info(f"Converted column '{col}' to numeric.")
+            
+            try:
+                converted_datetime = pd.to_datetime(df[col], errors='coerce')
+                # If >80% are valid dates, convert the column
+                if converted_datetime.count() > threshold:
+                    df[col] = converted_datetime
+                    self.logger.info(f"Converted column '{col}' to datetime.")
+            except Exception:
+                pass
 
         # 3. Sanitize string columns
+        # Vectorized string substitution for entire subset if possible
         string_cols = df.select_dtypes(include=['object']).columns
-        for col in string_cols:
-            df[col] = df[col].astype(str).str.strip()
-            df[col] = df[col].replace(r'^[<>"\';\n\r]+$', '', regex=True)
+        if not string_cols.empty:
+            # Using apply with optimized str accessor is usually fastest for string ops in pandas < 3.0
+            # but straightforward assignment is safer.
+            for col in string_cols:
+                # Ensure string type then strip and clean
+                s = df[col].astype(str).str.strip()
+                df[col] = s.replace(r'^[<>"\';\n\r]+$', '', regex=True)
         
         return df
     
     def _downcast_numerics(self, df: pd.DataFrame) -> pd.DataFrame:
         """ MEMORY : Downcast numeric columns to save memory."""
-        numeric_cols = df.select_dtypes(include=np.number).columns
-        for col in numeric_cols:
-            if 'int' in str(df[col].dtype):
-                df[col] = pd.to_numeric(df[col], downcast='integer')
-            elif 'float' in str(df[col].dtype):
-                df[col] = pd.to_numeric(df[col], downcast='float')
-        self.logger.info("Numeric columns downcasted for memory efficiency.")
+        # Use select_dtypes for cleaner selection
+        fcols = df.select_dtypes('float').columns
+        icols = df.select_dtypes('integer').columns
+        
+        # Downcast float types
+        for col in fcols:
+            df[col] = pd.to_numeric(df[col], downcast='float')
+            
+        # Downcast integer types
+        for col in icols:
+            df[col] = pd.to_numeric(df[col], downcast='integer')
+            
+        self.logger.info(f"Downcasted {len(fcols)} float and {len(icols)} integer columns.")
         return df
 
     def load_data(self, file_path: str):
+        """
+        Orchestrates the data loading pipeline: Load -> Prepare -> Downcast -> Deduplicate.
+        
+        Args:
+            file_path (str): Path to the dataset.
+        """
         try:
             df = self.load_new_dataframe(file_path)
             df = self._prepare_data_for_processing(df)
             df = self._downcast_numerics(df)
-            
-            # 4. Drop duplicates
+            # Drop duplicates
             original_shape = df.shape
             df = df.drop_duplicates()
             cleaned_shape = df.shape
@@ -159,12 +201,12 @@ class Data_Analyzer:
             self.df = df
             self.logger.info(f"Data loaded and prepared: {len(df)} rows, {len(df.columns)} columns.")
             
-            # MEMORY: Force garbage collection
+            # Force garbage collection
             gc.collect()
             
         except Exception as e:
             self.logger.error(f"Data loading failed: {str(e)}")
-            raise
+            raise DataAnalyzerError(f"Failed to load data: {e}") from e
 
     def get_column_types(self) -> dict:
         if self.df is None:
@@ -195,12 +237,17 @@ class Data_Analyzer:
         }
 
     def train_model(self, target_col: str):
-        if self.df is None: raise ValueError("Data not loaded.")
-        if target_col not in self.df.columns: raise ValueError(f"Target column '{target_col}' not found.")
+        """
+        Trains multiple models (Reg/Class) and selects the best one via Cross-Validation.
+        Args: target_col (str): The name of the target column to predict.
+        Raises: DataAnalyzerError: If training fails.
+        """
+        if self.df is None: raise DataAnalyzerError("Data not loaded.")
+        if target_col not in self.df.columns: raise DataAnalyzerError(f"Target column '{target_col}' not found.")
             
         self.target_col = target_col
         
-        # 1. Identify Features (X) and Target (y)
+        # Identify Features (X) and Target (y)
         column_types = self.get_column_types()
         
         if target_col in column_types['numeric']:
@@ -223,13 +270,13 @@ class Data_Analyzer:
         X = self.df[self.features_list]
         if X.empty: raise ValueError("No feature columns available. Check data.")
             
-        # 2. Split Data FIRST
+        # Split Data FIRST
         X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
         
-        # 3. Create Preprocessing Pipeline
+        # Create Preprocessing Pipeline
         preprocessor = create_preprocessor(numeric_features, categorical_features, datetime_features)
         
-        # 4. Define Models and Hyperparameter Grids 
+        # Define Models and Hyperparameter Grids 
         if self.model_type == 'regression':
             best_pipeline, best_model_name, best_score = self._train_regression(X_train, y_train, X_test, y_test, preprocessor)
         else:
@@ -238,7 +285,7 @@ class Data_Analyzer:
         self.model_pipeline = best_pipeline
         self.logger.info(f"Selected best model: {best_model_name} with CV score: {best_score:.4f}")
         
-        # 6. Final Evaluation & Feature Importance
+        # Final Evaluation & Feature Importance
         y_pred = self.model_pipeline.predict(X_test)
         
         print("\n--- Model Training Complete ---")
@@ -256,7 +303,7 @@ class Data_Analyzer:
         # Feature Importance 
         self.show_feature_importance()
         
-        # MEMORY: Force garbage collection
+        # Force garbage collection
         gc.collect()
 
     def _train_regression(self, X_train, y_train, X_test, y_test, preprocessor):
@@ -265,7 +312,9 @@ class Data_Analyzer:
             'RandomForest': (RandomForestRegressor(random_state=42), 
                              {'model__n_estimators': [50, 100, 200], 'model__max_depth': [5, 10, 20, None]}),
             'GradientBoosting': (GradientBoostingRegressor(random_state=42), 
-                                 {'model__n_estimators': [50, 100], 'model__learning_rate': [0.05, 0.1]})
+                                 {'model__n_estimators': [50, 100], 'model__learning_rate': [0.05, 0.1]}),
+            'HistGradientBoosting': (HistGradientBoostingRegressor(random_state=42),
+                                     {'model__learning_rate': [0.05, 0.1], 'model__max_iter': [50, 100]})
         }
         if XGBOOST_AVAILABLE:
             models['XGBoost'] = (XGBRegressor(random_state=42, enable_categorical=True),
@@ -279,7 +328,9 @@ class Data_Analyzer:
             'RandomForest': (RandomForestClassifier(random_state=42), 
                              {'model__n_estimators': [50, 100, 200], 'model__max_depth': [5, 10, 20, None]}),
             'GradientBoosting': (GradientBoostingClassifier(random_state=42), 
-                                 {'model__n_estimators': [50, 100], 'model__learning_rate': [0.05, 0.1]})
+                                 {'model__n_estimators': [50, 100], 'model__learning_rate': [0.05, 0.1]}),
+            'HistGradientBoosting': (HistGradientBoostingClassifier(random_state=42),
+                                     {'model__learning_rate': [0.05, 0.1], 'model__max_iter': [50, 100]})
         }
         if XGBOOST_AVAILABLE:
             models['XGBoost'] = (XGBClassifier(random_state=42, enable_categorical=True),
@@ -322,7 +373,10 @@ class Data_Analyzer:
         return best_pipeline, best_model_name, best_score
 
     def show_feature_importance(self):
-        """ Extracts and displays feature importance from the trained pipeline. """
+        """
+        Extracts and displays feature importance from the trained pipeline.
+        Prints the top 10 features to stdout.
+        """
         if self.model_pipeline is None:
             print("No model is trained.")
             return
@@ -359,8 +413,9 @@ class Data_Analyzer:
 
     def save_model(self, file_path: str):
         """
-        Saves the current model (Supervised or Unsupervised).
-        RL models are saved separately during training.
+        Saves the current model (Supervised or Unsupervised) to disk.
+        Args: file_path (str): Destination path for the model file.
+        Raises: DataAnalyzerError: If saving fails.
         """
         try:
             save_object = {
@@ -383,9 +438,14 @@ class Data_Analyzer:
             self.logger.info(f"Model saved to {file_path}")
         except Exception as e:
             self.logger.error(f"Failed to save model: {e}")
-            raise
+            raise DataAnalyzerError(f"Failed to save model: {e}") from e
 
     def load_model(self, file_path: str):
+        """
+        Loads a saved model from disk.
+        Args: file_path (str): Path to the model file.
+        Raises: DataAnalyzerError: If loading fails.
+        """
         try:
             if not os.path.exists(file_path): raise FileNotFoundError(f"Model file not found: {file_path}")
             
@@ -411,10 +471,16 @@ class Data_Analyzer:
             
         except Exception as e:
             self.logger.error(f"Failed to load model: {e}")
-            raise
+            raise DataAnalyzerError(f"Failed to load model: {e}") from e
 
     def predict_new_data(self, new_data_df: pd.DataFrame) -> pd.DataFrame:
-        if self.model_pipeline is None: raise ValueError("No model is loaded or trained.")
+        """
+        Generates predictions for new data using the trained model.
+        Args: new_data_df (pd.DataFrame): Dataframe containing features matching the training data.
+        Returns: pd.DataFrame: Original dataframe with a 'prediction' column appended.
+        Raises: DataAnalyzerError: If prediction fails or model not trained.
+        """
+        if self.model_pipeline is None: raise DataAnalyzerError("No model is loaded or trained.")
         
         try:
             missing_cols = set(self.features_list) - set(new_data_df.columns)
@@ -435,7 +501,9 @@ class Data_Analyzer:
             raise
             
     def query_data(self, query: str) -> pd.DataFrame:
-        if self.df is None: raise ValueError("Data not loaded.")
+        if self.df is None: 
+            raise ValueError("Data not loaded.")
+
         try:
             result_df = self.df.query(query)
             self.logger.info(f"Query executed. Result shape: {result_df.shape}")
@@ -445,17 +513,21 @@ class Data_Analyzer:
             raise ValueError(f"Invalid query. Use Pandas query syntax. Details: {e}")
 
     def plot_data(self, plot_type: str, column_x: str, column_y: str = None):
-        if self.df is None: raise ValueError("Data not loaded.")
+        if self.df is None: 
+            raise ValueError("Data not loaded.")
         plt.figure(figsize=(10, 6))
         try:
             if plot_type == 'histogram':
-                if column_x not in self.df.columns: raise ValueError(f"Column '{column_x}' not found.")
-                if not is_numeric_dtype(self.df[column_x]): raise ValueError(f"Column '{column_x}' is not numeric.")
+                if column_x not in self.df.columns: 
+                    raise ValueError(f"Column '{column_x}' not found.")
+                if not is_numeric_dtype(self.df[column_x]): 
+                    raise ValueError(f"Column '{column_x}' is not numeric.")
                 self.df[column_x].plot(kind='hist', bins=30, edgecolor='black', alpha=0.7)
                 plt.title(f'Histogram of {column_x}')
             
             elif plot_type == 'scatter':
-                if column_x not in self.df.columns or column_y not in self.df.columns: raise ValueError(f"Column(s) not found.")
+                if column_x not in self.df.columns or column_y not in self.df.columns: 
+                    raise ValueError(f"Column(s) not found.")
                 if not is_numeric_dtype(self.df[column_x]) or not is_numeric_dtype(self.df[column_y]):
                     raise ValueError(f"Both columns must be numeric.")
                 plt.scatter(self.df[column_x], self.df[column_y], alpha=0.7)
@@ -471,7 +543,8 @@ class Data_Analyzer:
 
     def get_analysis_options(self) -> dict:
         """Get summary of data columns."""
-        if self.df is None: raise ValueError("Data not loaded.")
+        if self.df is None: 
+            raise ValueError("Data not loaded.")
         
         types = self.get_column_types()
         return {
@@ -510,7 +583,6 @@ class Data_Analyzer:
         X = self.df[all_features]
         
         # Create the full preprocessor (scaling and OHE)
-        # Note: We use the existing preprocessor pipeline to ensure data is scaled and encoded.
         preprocessor = create_preprocessor(numeric_features, categorical_features, datetime_features)
         
         try:
@@ -530,19 +602,17 @@ class Data_Analyzer:
                 self.df[new_col_name] = labels
                 
                 self.logger.info(f"K-Means Clustering complete. Added column: '{new_col_name}'")
-                print(f"\n--- Clustering Analysis Complete ---")
-                print(f"Added column: '{new_col_name}' to the DataFrame.")
-                print(f"Cluster sizes:\n{self.df[new_col_name].value_counts().to_markdown()}")
+                self.logger.info(f"\n--- Clustering Analysis Complete ---")
+                self.logger.info(f"Added column: '{new_col_name}' to the DataFrame.")
+                self.logger.info(f"Cluster sizes:\n{self.df[new_col_name].value_counts().to_markdown()}")
             
             elif analysis_type == 'pca':
                 if k_or_n > X_processed.shape[1]:
                     raise ValueError(f"N ({k_or_n}) cannot be greater than the number of features after preprocessing ({X_processed.shape[1]}).")
-                    
-                # Run PCA
+                
                 model = PCA(n_components=k_or_n, random_state=42)
                 components = model.fit_transform(X_processed)
                 
-                # Add components back to the DataFrame
                 component_names = [f'pca_c{i+1}' for i in range(k_or_n)]
                 for i, name in enumerate(component_names):
                     self.df[name] = components[:, i]
@@ -578,14 +648,11 @@ class Data_Analyzer:
         if target_col not in self.df.columns or date_col not in self.df.columns:
             raise ValueError(f"Columns {target_col} and/or {date_col} not found in data.")
 
-        print(f"\n--- Starting Prophet Forecasting ---")
+        self.logger.info(f"\n--- Starting Prophet Forecasting ---")
         self.logger.info(f"Forecasting target '{target_col}' using date column '{date_col}' for {periods} periods.")
 
         try:
-            # Prophet requires columns named 'ds' (date) and 'y' (target)
-            prophet_df = self.df[[date_col, target_col]].rename(columns={date_col: 'ds', target_col: 'y'})
-            
-            # Ensure proper types
+            prophet_df = self.df[[date_col, target_col]].rename(columns={date_col: 'ds', target_col: 'y'})    
             prophet_df['ds'] = pd.to_datetime(prophet_df['ds'])
             prophet_df['y'] = pd.to_numeric(prophet_df['y'], errors='coerce')
             prophet_df = prophet_df.dropna()
@@ -596,7 +663,6 @@ class Data_Analyzer:
             future = model.make_future_dataframe(periods=periods)
             forecast = model.predict(future)
             
-            # Generate plots
             fig1 = model.plot(forecast)
             fig2 = model.plot_components(forecast)
             
@@ -630,11 +696,11 @@ class Data_Analyzer:
 
         # We need numeric targets for trend prediction
         if not is_numeric_dtype(self.df[target_col]):
-             raise ValueError("RL Trend Prediction requires a numeric target column.")
+            raise ValueError("RL Trend Prediction requires a numeric target column.")
 
-        print(f"\n--- Starting RL Training (PPO) ---")
-        print(f"Target: {target_col}")
-        print(f"Timesteps: {total_timesteps}")
+        self.logger.info(f"\n--- Starting RL Training (PPO) ---")
+        self.logger.info(f"Target: {target_col}")
+        self.logger.info(f"Timesteps: {total_timesteps}")
         self.logger.info(f"Initializing RL environment for target: {target_col}")
 
         try:
@@ -660,7 +726,7 @@ class Data_Analyzer:
             print("Training in progress... (This may take a moment)")
             model.learn(total_timesteps=total_timesteps)
             
-            print("\n--- RL Training Complete ---")
+            self.logger.info("\n--- RL Training Complete ---")
             
             # 5. Simple Evaluation Loop
             obs = env.reset()
