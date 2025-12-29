@@ -24,7 +24,7 @@ def load_dependencies():
         
         status_container.info("Loading AI Core (3/4)...")
         try:
-            from analyzer.data_analyzer import Data_Analyzer, XGBOOST_AVAILABLE, PROPHET_AVAILABLE, RL_AVAILABLE
+            from analyzer.data_analyzer import DataAnalyzer, XGBOOST_AVAILABLE, PROPHET_AVAILABLE, RL_AVAILABLE
         except ImportError as e:
             st.error(f"AI Core Load Failed: {e}")
             st.stop()
@@ -33,13 +33,13 @@ def load_dependencies():
         time.sleep(0.5)
         status_container.empty()
         
-        return pd, px, go, Data_Analyzer, XGBOOST_AVAILABLE, PROPHET_AVAILABLE, RL_AVAILABLE
+        return pd, px, go, DataAnalyzer, XGBOOST_AVAILABLE, PROPHET_AVAILABLE, RL_AVAILABLE
     except Exception as e:
         st.error(f"❌ Critical Dependency Error: {e}")
         st.stop()
 
 # Load dependencies
-pd, px, go, Data_Analyzer, XGBOOST_AVAILABLE, PROPHET_AVAILABLE, RL_AVAILABLE = load_dependencies()
+pd, px, go, DataAnalyzer, XGBOOST_AVAILABLE, PROPHET_AVAILABLE, RL_AVAILABLE = load_dependencies()
 
 # --- CUSTOM CSS & STYLING (Modern Dark Theme) ---
 st.markdown("""
@@ -132,7 +132,7 @@ st.markdown("""
 # --- INITIALIZE STATE (Lazy Loading to prevent timeout) ---
 @st.cache_resource
 def get_analyzer():
-    return Data_Analyzer()
+    return DataAnalyzer()
 
 try:
     if 'analyzer' not in st.session_state:
